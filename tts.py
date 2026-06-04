@@ -18,6 +18,19 @@ def resolve_path(path_value: str) -> Path:
     return path
 
 
+def get_available_voices():
+    """Get list of available voice IDs from vieneu model."""
+    try:
+        tts = Vieneu()
+        voices = tts.list_preset_voices()
+        voice_ids = [vid for desc, vid in voices]
+        print(f"✓ Loaded voices: {voice_ids}")
+        return voice_ids
+    except Exception as e:
+        print(f"✗ Error loading voices: {e}")
+        return ["ly", "binh", "tuyen", "vinh", "doan", "son", "ngoc"]
+
+
 def select_voice(tts: Vieneu, voice_query: str):
     voices = tts.list_preset_voices()
     print("\nDanh sách giọng:")
@@ -55,6 +68,51 @@ def synthesize_text(text_full: str, output_path: Path, voice_query: str = "ly"):
 
     for i, sentence in enumerate(sentences):
         print(f"  [{i+1}/{len(sentences)}] {sentence[:60]}...")
+        chunk = tts.infer(text=sentence, voice=voice_data)
+
+        if hasattr(chunk, "audio"):
+            arr = chunk.audio
+        elif isinstance(chunk, np.ndarray):
+            arr = chunk
+        else:
+            arr = np.array(chunk)
+
+        if silence is None:
+            silence = np.zeros(int(24000 * 0.3), dtype=arr.dtype)
+
+        all_audio.append(arr)
+        all_audio.append(silence)
+
+    final_audio = np.concatenate(all_audio)
+    sf.write(output_path, final_audio, samplerate=24000)
+    print(f"\nHoàn thành! Đã lưu: {output_path}")
+    print(f"Thời lượng: {len(final_audio)/24000:.1f} giây")
+
+
+def synthesize_text_with_progress(text_full: str, output_path: Path, voice_query: str = "ly", progress_callback=None):
+    """Synthesize text with progress updates for UI. Yields progress as it processes."""
+    tts = Vieneu()
+    voice_data = select_voice(tts, voice_query)
+
+    sentences = split_sentences(text_full)
+    total = len(sentences)
+    print(f"\nTổng số câu: {total}")
+
+    all_audio = []
+    silence = None
+
+    for i, sentence in enumerate(sentences):
+        current = i + 1
+        progress_msg = f"  [{current}/{total}] {sentence[:60]}..."
+        print(progress_msg)
+        
+        # Yield progress for UI
+        yield (current, total)
+        
+        # Also call callback if provided (for backward compatibility)
+        if progress_callback:
+            progress_callback((current, total))
+        
         chunk = tts.infer(text=sentence, voice=voice_data)
 
         if hasattr(chunk, "audio"):

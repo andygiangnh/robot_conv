@@ -99,7 +99,7 @@ def sanitize_vietnamese_text(text: str) -> str:
 def main():
     parser = argparse.ArgumentParser(description="Generate Vietnamese text via Ollama and synthesize with Vieneu TTS")
     parser.add_argument("--prompt", help="Prompt text for the LLM (if omitted, reads stdin or asks interactively)")
-    parser.add_argument("--model", default="qwen2.5:7b-instruct", help="Ollama model name")
+    parser.add_argument("--model", default="gemma3-tts", help="Ollama model name")
     parser.add_argument("--system", default="You are a helpful assistant that replies in Vietnamese.", help="System prompt")
     parser.add_argument("--vi-only", action="store_true", help="Force Vietnamese-only responses")
     parser.add_argument("--clean-text", action="store_true", help="Clean non-Vietnamese artifacts from output")
