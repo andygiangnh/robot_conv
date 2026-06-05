@@ -1,17 +1,39 @@
 import time
 import sys
 import os
+import wave
 from pathlib import Path
 
 import gradio as gr
+import numpy as np
 
 from pipeline_tts import generate_text_stream, sanitize_vietnamese_text
 from tts import synthesize_text, synthesize_text_with_progress, get_available_voices
 from speech_input import listen_for_speech, listen_for_wakeword
+from stt_vietnamese import get_vietnamese_stt
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
+RECORDED_PROMPT_PATH = DATA_DIR / "recorded_prompt.wav"
+
+
+VI_STT = get_vietnamese_stt()
+
+
+def save_wav_from_float32(audio_data: np.ndarray, output_path: Path, sample_rate: int = 16000) -> str:
+    """Save float32 mono audio in the range [-1, 1] as a WAV file."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    pcm = np.clip(audio_data, -1.0, 1.0)
+    pcm_bytes = (pcm * 32767.0).astype(np.int16).tobytes()
+
+    with wave.open(str(output_path), "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(sample_rate)
+        wav_file.writeframes(pcm_bytes)
+
+    return str(output_path)
 
 
 def generate_text_only(
@@ -130,14 +152,26 @@ def run_pipeline_stream(
 
 
 def listen_speech_input():
-    """Listen to microphone and return recognized text."""
+    """Record Vietnamese speech, save a preview WAV, and return the file path."""
     try:
-        text = listen_for_speech(timeout=10, phrase_time_limit=10)
-        if not text:
-            raise gr.Error("Could not recognize speech. Please try again.")
-        return text
+        audio_data = VI_STT.record_microphone_audio(timeout=10, phrase_time_limit=10)
+        return save_wav_from_float32(audio_data, RECORDED_PROMPT_PATH)
     except Exception as e:
         raise gr.Error(f"Speech recognition error: {str(e)}")
+
+
+def transcribe_recorded_prompt(audio_path):
+    """Transcribe the recorded preview WAV into the prompt box."""
+    if not audio_path:
+        raise gr.Error("Record audio first, then transcribe it.")
+
+    try:
+        text = VI_STT.transcribe_file(str(audio_path))
+        if not text:
+            raise gr.Error("Could not transcribe the recorded audio. Please try again.")
+        return text
+    except Exception as e:
+        raise gr.Error(f"Vietnamese STT error: {str(e)}")
 
 
 def listen_wakeword_input():
@@ -153,14 +187,18 @@ def listen_wakeword_input():
 
 with gr.Blocks(title="Vietnamese LLM to TTS") as demo:
     gr.Markdown("# Vietnamese LLM to TTS")
-    gr.Markdown("Step 1: Click 'Generate Text' to create Vietnamese text. Step 2: Click 'Synthesize Speech' to create audio.")
+    gr.Markdown("Step 1: Record and preview a Vietnamese prompt, then transcribe it into the prompt box. Step 2: Generate text. Step 3: Synthesize speech.")
 
     with gr.Row():
         prompt = gr.Textbox(label="Prompt", lines=6, placeholder="Tell me a story in Vietnamese...")
 
     with gr.Row():
         btn_listen = gr.Button("🎤 Record Prompt", variant="primary")
+        btn_transcribe_recording = gr.Button("📝 Transcribe Recording", variant="secondary")
         btn_wakeword = gr.Button("🎤 Listen for 'hey pi-bot'", variant="primary")
+
+    recorded_audio = gr.Audio(label="Recorded Prompt Preview", type="filepath")
+    recorded_status = gr.Textbox(label="Recording Status", interactive=False, lines=2)
 
     with gr.Row():
         model = gr.Textbox(label="Ollama model", value="gemma3-tts")
@@ -185,7 +223,12 @@ with gr.Blocks(title="Vietnamese LLM to TTS") as demo:
     output_progress = gr.Textbox(label="Progress", interactive=False, lines=3)
 
     # Speech input handlers
-    btn_listen.click(fn=listen_speech_input, outputs=prompt)
+    btn_listen.click(fn=listen_speech_input, outputs=recorded_audio)
+    btn_listen.click(
+        fn=lambda: "Recorded audio is ready to preview. Click 'Transcribe Recording' to fill the prompt.",
+        outputs=recorded_status,
+    )
+    btn_transcribe_recording.click(fn=transcribe_recorded_prompt, inputs=recorded_audio, outputs=prompt)
     btn_wakeword.click(fn=listen_wakeword_input, outputs=prompt)
 
     # Step 1: Generate text ONLY - streams to text field, NO progress bar in audio field
